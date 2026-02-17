@@ -1,4 +1,4 @@
-name: Node.js CI
+name: CI/CD Pipeline
 
 on:
   push:
@@ -6,43 +6,150 @@ on:
   pull_request:
     branches: ['main']
 
+permissions:
+  contents: read
+  packages: write
+  # Required for Trivy to upload security alerts (optional)
+  security-events: write 
+
 jobs:
-  build-and-test:
+  # JOB 1: LINT (Runs in parallel with Test)
+  lint:
+    name: Lint Code
     runs-on: ubuntu-latest
-
     steps:
-      # 1. Check out the code
       - name: Checkout code
-        uses: actions/checkout@v3
-
-      # 2. Setup Node.js environment
-      - name: Use Node.js 20.x
-        uses: actions/setup-node@v3
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: 20.x
+          node-version: '20'
           cache: 'npm'
-
-      # 3. Install dependencies
       - name: Install dependencies
         run: npm ci
-
-      # 4. Check Code Formatting (Prettier)
+      # - name: Run Linter
+      #   run: npm run lint
       - name: Check Formatting
         run: npm run format
 
-      # 5. Run Linter (ESLint)
-      # - name: Run Linter
-      #   run: npm run lint:fix
-
-      # 6. Run Unit Tests (Jest)
+  # JOB 2: TEST (Runs in parallel with Lint)
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install dependencies
+        run: npm ci
       - name: Run Tests
         run: npm test
 
-      # 7. Build Docker Image (Only runs if previous steps pass)
-      - name: Build Docker Image
-        if: success()
-        run: |
-          docker build -t node-devops-api .
-          echo "Docker image built successfully"
+  # JOB 3: BUILD (Runs only if Lint and Test pass)
+  build:
+    name: Build Artifacts
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build project
+        run: npm run build
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
 
-    # Future Step: Log in to GitHub Container Registry and push the image
+  # JOB 4: DOCKER (Runs only if Build passes)
+  docker:
+    name: Docker Build and Push
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
+    outputs:
+      image_tag: ${{ steps.set_output.outputs.image_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # We download the 'dist' folder created in the previous job
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: dist/
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,format=long
+            type=ref,event=branch
+            latest
+      
+      # Build locally first (load: true) so Trivy can scan it
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          load: true
+      
+      # SECURITY SCAN
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+          format: 'table'
+          exit-code: '1' # Fail pipeline if High/Critical vulnerabilities found
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+      
+      # If scan passes, push to registry
+      - name: Push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+      
+      - name: Set image tag output
+        id: set_output
+        run: echo "image_tag=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT

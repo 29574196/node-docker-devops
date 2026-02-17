@@ -9,7 +9,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
-    "test": "jest"
+    "test": "jest",
+    "build": "mkdir -p dist && cp -r index.js package.json package-lock.json dist/"
   },
   "repository": {
     "type": "git",
