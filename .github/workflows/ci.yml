@@ -1,0 +1,48 @@
+name: Node.js CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Check out the code
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    # 2. Setup Node.js environment
+    - name: Use Node.js 18.x
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18.x
+        cache: 'npm'
+
+    # 3. Install dependencies
+    - name: Install dependencies
+      run: npm ci
+
+    # 4. Check Code Formatting (Prettier)
+    - name: Check Formatting
+      run: npm run format
+
+    # 5. Run Linter (ESLint)
+    - name: Run Linter
+      run: npm run lint
+
+    # 6. Run Unit Tests (Jest)
+    - name: Run Tests
+      run: npm test
+
+    # 7. Build Docker Image (Only runs if previous steps pass)
+    - name: Build Docker Image
+      if: success() 
+      run: |
+        docker build -t node-devops-api .
+        echo "Docker image built successfully"
+      
+    # Future Step: Log in to GitHub Container Registry and push the image
