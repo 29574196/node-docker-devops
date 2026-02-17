@@ -10,9 +10,7 @@ describe('User API', () => {
   });
 
   it('POST /users should create a user', async () => {
-    const res = await request(app)
-      .post('/users')
-      .send({ name: 'Jane Doe' });
+    const res = await request(app).post('/users').send({ name: 'Jane Doe' });
     expect(res.statusCode).toEqual(201);
     expect(res.body.name).toBe('Jane Doe');
   });

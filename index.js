@@ -4,9 +4,7 @@ const app = express();
 app.use(express.json());
 
 // In-memory "database"
-let users = [
-  { id: 1, name: 'John Doe' }
-];
+let users = [{ id: 1, name: 'John Doe' }];
 
 // READ (Get all users)
 app.get('/users', (req, res) => {

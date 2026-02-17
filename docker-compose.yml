@@ -3,10 +3,10 @@ services:
   api:
     build: .
     ports:
-      - "3000:3000"
+      - '3000:3000'
     volumes:
       - ./index.js:/app/index.js # Syncs your local file to the container
-      - /app/node_modules        # Prevents local node_modules from overriding container's
+      - /app/node_modules # Prevents local node_modules from overriding container's
     environment:
       - PORT=3000
     command: npm run dev
