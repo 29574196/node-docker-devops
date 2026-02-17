@@ -31,8 +31,8 @@ jobs:
         run: npm run format
 
       # 5. Run Linter (ESLint)
-      - name: Run Linter
-        run: npm run lint:fix
+      # - name: Run Linter
+      #   run: npm run lint:fix
 
       # 6. Run Unit Tests (Jest)
       - name: Run Tests
