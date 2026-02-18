@@ -4,7 +4,10 @@ const app = express();
 app.use(express.json());
 
 // In-memory "database"
-let users = [{ id: 1, name: 'John Doe' }];
+let users = [
+  { id: 1, name: 'John Doe' },
+  { id: 2, name: 'Jane Doe' },
+];
 
 // READ (Get all users)
 app.get('/users', (req, res) => {
@@ -20,7 +23,7 @@ app.post('/users', (req, res) => {
 
 // Just for testing functionality
 app.get('/health', (req, res) => {
-  res.status(200).send('OK');
+  res.status(200).send('OK Health');
 });
 
 const PORT = process.env.PORT || 3000;
@@ -28,6 +31,7 @@ const PORT = process.env.PORT || 3000;
 // Only start the server if this file is run directly (not required by tests)
 if (require.main === module) {
   app.listen(PORT, () => {
+    // eslint-disable-next-line no-console
     console.log(`Server running on port ${PORT}`);
   });
 }
