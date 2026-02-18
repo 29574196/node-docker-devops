@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: node-docker-deployment
-        image: ghcr.io/29574196/node-docker-devops:sha-f7fa322
+        image: ghcr.io/29574196/node-docker-devops:sha-06277d4
         # Image will be automatically updated by CI/CD pipeline
         imagePullPolicy: Always
         ports:
