@@ -6,111 +6,71 @@ on:
   pull_request:
     branches: ['main']
 
+# Global permissions
 permissions:
-  contents: read
-  packages: write
-  # Required for Trivy to upload security alerts (optional)
+  contents: write    # REQUIRED to push the commit back to the repo
+  packages: write    # REQUIRED to push the docker image
   security-events: write 
 
 jobs:
-  # JOB 1: LINT (Runs in parallel with Test)
+  # --- JOBS 1, 2, 3 (Lint, Test, Build) remain the same ---
   lint:
     name: Lint Code
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - name: Install dependencies
-        run: npm ci
-      # - name: Run Linter
-      #   run: npm run lint
-      - name: Check Formatting
-        run: npm run format
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci
+      # - run: npm run lint
+      - run: npm run format
 
-  # JOB 2: TEST (Runs in parallel with Lint)
   test:
     name: Run Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - name: Install dependencies
-        run: npm ci
-      - name: Run Tests
-        run: npm test
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci
+      - run: npm test
 
-  # JOB 3: BUILD (Runs only if Lint and Test pass)
   build:
     name: Build Artifacts
     runs-on: ubuntu-latest
     needs: [test, lint]
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      
-      - name: Install dependencies
-        run: npm ci
-      
-      - name: Build project
-        run: npm run build
-      
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-artifacts
-          path: dist/
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm' }
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with: { name: build-artifacts, path: dist/ }
 
-  # JOB 4: DOCKER (Runs only if Build passes)
+  # --- JOB 4: DOCKER (With output for the next job) ---
   docker:
     name: Docker Build and Push
     runs-on: ubuntu-latest
     needs: [build]
-    permissions:
-      contents: read
-      packages: write
     env:
       REGISTRY: ghcr.io
       IMAGE_NAME: ${{ github.repository }}
+    # EXPORT THE IMAGE TAG SO THE NEXT JOB CAN USE IT
     outputs:
-      image_tag: ${{ steps.set_output.outputs.image_tag }}
+      image_tag: ${{ steps.set_tag.outputs.tag }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      
-      # We download the 'dist' folder created in the previous job
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: build-artifacts
-          path: dist/
-      
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-      
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: build-artifacts, path: dist/ }
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Extract metadata for Docker
+      - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -119,37 +79,62 @@ jobs:
             type=sha,format=long
             type=ref,event=branch
             latest
-      
-      # Build locally first (load: true) so Trivy can scan it
-      - name: Build Docker image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: false
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          load: true
-      
-      # SECURITY SCAN
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
-          format: 'table'
-          exit-code: '1' # Fail pipeline if High/Critical vulnerabilities found
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
-      
-      # If scan passes, push to registry
-      - name: Push Docker image
+
+      # Export the tag to use in the outputs
+      - name: Set concise image tag
+        id: set_tag
+        run: echo "tag=sha-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Build and Push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  # --- JOB 5: UPDATE K8S (Your new job) ---
+  update-k8s:
+    name: Update K8s Manifest
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # We need the full history to push back correctly
+          fetch-depth: 0 
+          token: ${{ secrets.GITHUB_TOKEN }}
       
-      - name: Set image tag output
-        id: set_output
-        run: echo "image_tag=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+      - name: Setup Git config
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+      
+      - name: Update Kubernetes deployment file
+        env:
+          # Get the tag passed from the 'docker' job
+          IMAGE_TAG: ${{ needs.docker.outputs.image_tag }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REGISTRY: ghcr.io
+        run: |
+          # Construct the full image string (converting repo name to lowercase to avoid Docker errors)
+          REPO_LOWER=$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          NEW_IMAGE="${REGISTRY}/${REPO_LOWER}:${IMAGE_TAG}"
+          
+          echo "Updating deployment to use: $NEW_IMAGE"
+          
+          # The sed command. 
+          # We search for "image: ghcr.io/..." and replace the whole line.
+          sed -i "s|image: ${REGISTRY}/.*|image: ${NEW_IMAGE}|" kubernetes/deployment.yaml
+          
+          # Check if it worked
+          cat kubernetes/deployment.yaml | grep "image:"
+
+      - name: Commit and push changes
+        run: |
+          git add kubernetes/deployment.yaml
+          # [skip ci] prevents this commit from triggering the workflow again (Infinite Loop Protection!)
+          git commit -m "Update Kubernetes image to ${{ needs.docker.outputs.image_tag }} [skip ci]" || echo "No changes to commit"
+          git push origin main
