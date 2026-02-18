@@ -80,10 +80,14 @@ jobs:
             type=ref,event=branch
             latest
 
-      # Export the tag to use in the outputs
+      # Export the tag to use in the outputs - FIXED to match actual Docker tag format
       - name: Set concise image tag
         id: set_tag
-        run: echo "tag=sha-$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+        run: |
+          # Get the full SHA and format it as sha-<full-sha> (without the "sha256:" prefix)
+          FULL_SHA=$(git rev-parse HEAD)
+          echo "tag=sha-${FULL_SHA}" >> $GITHUB_OUTPUT
+          echo "Using tag: sha-${FULL_SHA}"
 
       - name: Build and Push
         uses: docker/build-push-action@v5
